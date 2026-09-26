@@ -77,8 +77,9 @@ $new = @'
                             break;
                     }
 '@
-if (-not $s.Contains($old)) { throw 'Expected parameter switch block was not found.' }
-$s = $s.Replace($old, $new)
+$s2 = [regex]::Replace($s, '(?ms)\s*object\? raw = p\.StorageType switch\s*\{.*?^\s*\};', [Environment]::NewLine + $new.TrimEnd(), 1)
+if ($s2 -eq $s) { Write-Host 'Parameter switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
+$s = $s2
 
 $oldLoc = @'
             return element.Location switch
@@ -123,8 +124,9 @@ $newLoc = @'
             }
             return null;
 '@
-if (-not $s.Contains($oldLoc)) { throw 'Expected location switch block was not found.' }
-$s = $s.Replace($oldLoc, $newLoc)
+$s2 = [regex]::Replace($s, '(?ms)\s*return element\.Location switch\s*\{.*?^\s*\};', [Environment]::NewLine + $newLoc.TrimEnd(), 1)
+if ($s2 -eq $s) { Write-Host 'Location switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
+$s = $s2
 Set-Content -LiteralPath $snapshot -Value $s -Encoding UTF8
 
 $events = Join-Path $src 'src\RevitTrace.Addin\RevitEventRecorder.cs'
@@ -152,8 +154,9 @@ $newDialog = @'
             typed = new { kind = "dialog", dialog_id = Safe(() => e.DialogId) };
         }
 '@
-if (-not $e.Contains($oldDialog)) { throw 'Expected dialog switch block was not found.' }
-$e = $e.Replace($oldDialog, $newDialog)
+$e2 = [regex]::Replace($e, '(?ms)\s*object typed = e switch\s*\{.*?^\s*\};', [Environment]::NewLine + $newDialog.TrimEnd(), 1)
+if ($e2 -eq $e) { Write-Host 'Dialog switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
+$e = $e2
 Set-Content -LiteralPath $events -Value $e -Encoding UTF8
 
 Write-Host 'Building Revit add-in...'
