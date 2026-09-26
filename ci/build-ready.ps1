@@ -159,6 +159,12 @@ if ($e2 -eq $e) { Write-Host 'Dialog switch patch not applied; source may alread
 $e = $e2
 Set-Content -LiteralPath $events -Value $e -Encoding UTF8
 
+# Fix typo in the R1.3 aggregator entry point.
+$aggProgram = Join-Path $src 'src\RevitTrace.Aggregator\AggregatorProgram.cs'
+$ap = Get-Content $aggProgram -Raw
+$ap = $ap.Replace('var options = Arguments.Parse(args);', 'var options = AggregatorOptions.Parse(args);')
+Set-Content -LiteralPath $aggProgram -Value $ap -Encoding UTF8
+
 Write-Host 'Building Revit add-in...'
 dotnet restore $addinProj --nologo
 dotnet build $addinProj -c Release --no-restore --nologo
