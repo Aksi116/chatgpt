@@ -43,20 +43,11 @@ $addinProj = Join-Path $src 'src\RevitTrace.Addin\RevitTrace.Addin.csproj'
 </Project>
 '@ | Set-Content -LiteralPath $addinProj -Encoding UTF8
 
-# C# switch expressions with unlike result types are rewritten as ordinary switches.
+# R1.3 source fixes required by the Revit 2025 compiler.
 $snapshot = Join-Path $src 'src\RevitTrace.Addin\SnapshotBuilder.cs'
-$s = Get-Content $snapshot -Raw
-$old = @'
-                    object? raw = p.StorageType switch
-                    {
-                        StorageType.String => p.AsString(),
-                        StorageType.Double => p.AsDouble(),
-                        StorageType.Integer => p.AsInteger(),
-                        StorageType.ElementId => p.AsElementId()?.Value,
-                        _ => null
-                    };
-'@
-$new = @'
+$code = Get-Content $snapshot -Raw
+
+$paramReplacement = @'
                     object? raw;
                     switch (p.StorageType)
                     {
@@ -77,31 +68,15 @@ $new = @'
                             break;
                     }
 '@
-$s2 = [regex]::Replace($s, '(?ms)\s*object\? raw = p\.StorageType switch\s*\{.*?^\s*\};', [Environment]::NewLine + $new.TrimEnd(), 1)
-if ($s2 -eq $s) { Write-Host 'Parameter switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
-$s = $s2
+$patched = [regex]::Replace(
+    $code,
+    '(?ms)\s*object\? raw = p\.StorageType switch\s*\{.*?^\s*\};',
+    [Environment]::NewLine + $paramReplacement.TrimEnd(),
+    1)
+if ($patched -eq $code) { Write-Host 'Parameter switch was already fixed or not found.' -ForegroundColor Yellow }
+$code = $patched
 
-$oldLoc = @'
-            return element.Location switch
-            {
-                LocationPoint lp => new
-                {
-                    kind = "point",
-                    point = P(lp.Point),
-                    rotation = lp.Rotation
-                },
-                LocationCurve lc => new
-                {
-                    kind = "curve",
-                    curve_type = lc.Curve.GetType().Name,
-                    start = SafePoint(() => lc.Curve.GetEndPoint(0)),
-                    end = SafePoint(() => lc.Curve.GetEndPoint(1)),
-                    length = Safe(() => lc.Curve.Length)
-                },
-                _ => null
-            };
-'@
-$newLoc = @'
+$locationReplacement = @'
             if (element.Location is LocationPoint lp)
             {
                 return new
@@ -124,22 +99,17 @@ $newLoc = @'
             }
             return null;
 '@
-$s2 = [regex]::Replace($s, '(?ms)\s*return element\.Location switch\s*\{.*?^\s*\};', [Environment]::NewLine + $newLoc.TrimEnd(), 1)
-if ($s2 -eq $s) { Write-Host 'Location switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
-$s = $s2
-Set-Content -LiteralPath $snapshot -Value $s -Encoding UTF8
+$patched = [regex]::Replace(
+    $code,
+    '(?ms)\s*return element\.Location switch\s*\{.*?^\s*\};',
+    [Environment]::NewLine + $locationReplacement.TrimEnd(),
+    1)
+if ($patched -eq $code) { Write-Host 'Location switch was already fixed or not found.' -ForegroundColor Yellow }
+Set-Content -LiteralPath $snapshot -Value $patched -Encoding UTF8
 
 $events = Join-Path $src 'src\RevitTrace.Addin\RevitEventRecorder.cs'
-$e = Get-Content $events -Raw
-$oldDialog = @'
-        object typed = e switch
-        {
-            TaskDialogShowingEventArgs td => new { kind = "task_dialog", dialog_id = td.DialogId },
-            MessageBoxShowingEventArgs mb => new { kind = "message_box", dialog_id = mb.DialogId, message = Safe(() => mb.Message) },
-            _ => new { kind = "dialog", dialog_id = Safe(() => e.DialogId) }
-        };
-'@
-$newDialog = @'
+$code = Get-Content $events -Raw
+$dialogReplacement = @'
         object typed;
         if (e is TaskDialogShowingEventArgs td)
         {
@@ -154,28 +124,33 @@ $newDialog = @'
             typed = new { kind = "dialog", dialog_id = Safe(() => e.DialogId) };
         }
 '@
-$e2 = [regex]::Replace($e, '(?ms)\s*object typed = e switch\s*\{.*?^\s*\};', [Environment]::NewLine + $newDialog.TrimEnd(), 1)
-if ($e2 -eq $e) { Write-Host 'Dialog switch patch not applied; source may already be fixed.' -ForegroundColor Yellow }
-$e = $e2
-Set-Content -LiteralPath $events -Value $e -Encoding UTF8
+$patched = [regex]::Replace(
+    $code,
+    '(?ms)\s*object typed = e switch\s*\{.*?^\s*\};',
+    [Environment]::NewLine + $dialogReplacement.TrimEnd(),
+    1)
+if ($patched -eq $code) { Write-Host 'Dialog switch was already fixed or not found.' -ForegroundColor Yellow }
+Set-Content -LiteralPath $events -Value $patched -Encoding UTF8
 
-# Fix typo in the R1.3 aggregator entry point.
+# R1.3 aggregator typo.
 $aggProgram = Join-Path $src 'src\RevitTrace.Aggregator\AggregatorProgram.cs'
-$ap = Get-Content $aggProgram -Raw
-$ap = $ap.Replace('var options = Arguments.Parse(args);', 'var options = AggregatorOptions.Parse(args);')
-Set-Content -LiteralPath $aggProgram -Value $ap -Encoding UTF8
+$code = Get-Content $aggProgram -Raw
+$code = $code.Replace('var options = Arguments.Parse(args);', 'var options = AggregatorOptions.Parse(args);')
+Set-Content -LiteralPath $aggProgram -Value $code -Encoding UTF8
 
-# UI watcher source needs System.IO for File/Path/Directory.
+# R1.3 UI watcher missing namespace.
 $uiWatcherSource = Join-Path $src 'src\RevitTrace.UIWatcher\RevitUiWatcher.cs'
-$uw = Get-Content $uiWatcherSource -Raw
-if ($uw -notmatch '(?m)^using System\.IO;\s*$') {
-    $uw = 'using System.IO;' + [Environment]::NewLine + $uw
-    Set-Content -LiteralPath $uiWatcherSource -Value $uw -Encoding UTF8
+$code = Get-Content $uiWatcherSource -Raw
+if ($code -notmatch '(?m)^using System\.IO;\s*$') {
+    $code = 'using System.IO;' + [Environment]::NewLine + $code
 }
+Set-Content -LiteralPath $uiWatcherSource -Value $code -Encoding UTF8
 
 Write-Host 'Building Revit add-in...'
 dotnet restore $addinProj --nologo
+if ($LASTEXITCODE -ne 0) { throw 'Revit add-in restore failed.' }
 dotnet build $addinProj -c Release --no-restore --nologo
+if ($LASTEXITCODE -ne 0) { throw 'Revit add-in build failed.' }
 
 $addinBin = Join-Path $src 'src\RevitTrace.Addin\bin\Release\net8.0-windows'
 $payload = Join-Path $ready 'Payload\ZODCHI.RevitTrace'
@@ -187,20 +162,21 @@ Copy-Item (Join-Path $addinBin 'ZODCHI.RevitTrace.Shared.dll') $payload -Force
 Write-Host 'Publishing aggregator...'
 $aggOut = Join-Path $out 'agg'
 dotnet publish (Join-Path $src 'src\RevitTrace.Aggregator\RevitTrace.Aggregator.csproj') -c Release --self-contained false --nologo -o $aggOut
+if ($LASTEXITCODE -ne 0) { throw 'Aggregator publish failed.' }
 Copy-Item (Join-Path $aggOut '*') $companion -Recurse -Force
 
 Write-Host 'Publishing UI watcher...'
 $uiOut = Join-Path $out 'ui'
 dotnet publish (Join-Path $src 'src\RevitTrace.UIWatcher\RevitTrace.UIWatcher.csproj') -c Release --self-contained false --nologo -o $uiOut
+if ($LASTEXITCODE -ne 0) { throw 'UI watcher publish failed.' }
 Copy-Item (Join-Path $uiOut '*') $companion -Recurse -Force
 
-# Autodesk API assemblies must never be shipped.
+# Never redistribute Autodesk assemblies.
 $forbidden = Get-ChildItem $ready -Recurse -File | Where-Object {
     $_.Name -in @('RevitAPI.dll','RevitAPIUI.dll','AdWindows.dll','UIFramework.dll')
 }
 if ($forbidden) {
-    $names = ($forbidden.FullName -join '; ')
-    throw "Forbidden Autodesk runtime assemblies found in package: $names"
+    throw ('Forbidden Autodesk runtime assemblies found in package: ' + ($forbidden.FullName -join '; '))
 }
 
 @'
@@ -233,7 +209,7 @@ $xml = @"
     <AddInId>29F3222B-0C42-469E-9A2C-BC97D723EA7B</AddInId>
     <FullClassName>ZODCHI.RevitTrace.Addin.RevitTraceApplication</FullClassName>
     <VendorId>ZODCHI</VendorId>
-    <VendorDescription>ZODCHI Research — observable Revit workflow recorder</VendorDescription>
+    <VendorDescription>ZODCHI Research - observable Revit workflow recorder</VendorDescription>
   </AddIn>
 </RevitAddIns>
 "@
@@ -272,7 +248,7 @@ pause
 '@ | Set-Content -LiteralPath (Join-Path $ready 'UNINSTALL.cmd') -Encoding ASCII
 
 @'
-ZODCHI RevitTrace R1.4 — READY BUILD FOR REVIT 2025
+ZODCHI RevitTrace R1.4 - READY BUILD FOR REVIT 2025
 
 INSTALL:
 1. Close Revit 2025.
@@ -288,140 +264,7 @@ INSTALL TARGET:
 %APPDATA%\Autodesk\Revit\Addins\2025\ZODCHI.RevitTrace\
 
 This package does NOT contain Autodesk RevitAPI.dll/RevitAPIUI.dll.
-The recorder only uses public Revit API assemblies already loaded by Revit.
-'@ | Set-Content -LiteralPath (Join-Path $ready 'README_INSTALL.txt') -Encoding UTF8
-
-$releaseDir = Join-Path $repo 'release'
-New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
-$zip = Join-Path $releaseDir 'ZODCHI-RevitTrace-R1.4-ready.zip'
-Remove-Item $zip -Force -ErrorAction SilentlyContinue
-Compress-Archive -Path (Join-Path $ready '*') -DestinationPath $zip -CompressionLevel Optimal
-
-$hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  ZODCHI-RevitTrace-R1.4-ready.zip" | Set-Content (Join-Path $releaseDir 'ZODCHI-RevitTrace-R1.4-ready.zip.sha256') -Encoding ASCII
-Write-Host "READY: $zip"
-Write-Host "SHA256: $hash"
-) {
-    $uw = "using System.IO;" + [Environment]::NewLine + $uw
-    Set-Content -LiteralPath $uiWatcherSource -Value $uw -Encoding UTF8
-}
-
-Write-Host 'Building Revit add-in...'
-dotnet restore $addinProj --nologo
-dotnet build $addinProj -c Release --no-restore --nologo
-
-$addinBin = Join-Path $src 'src\RevitTrace.Addin\bin\Release\net8.0-windows'
-$payload = Join-Path $ready 'Payload\ZODCHI.RevitTrace'
-$companion = Join-Path $payload 'Companion'
-New-Item -ItemType Directory -Force -Path $payload,$companion | Out-Null
-Copy-Item (Join-Path $addinBin 'ZODCHI.RevitTrace.Addin.dll') $payload -Force
-Copy-Item (Join-Path $addinBin 'ZODCHI.RevitTrace.Shared.dll') $payload -Force
-
-Write-Host 'Publishing aggregator...'
-$aggOut = Join-Path $out 'agg'
-dotnet publish (Join-Path $src 'src\RevitTrace.Aggregator\RevitTrace.Aggregator.csproj') -c Release --self-contained false --nologo -o $aggOut
-Copy-Item (Join-Path $aggOut '*') $companion -Recurse -Force
-
-Write-Host 'Publishing UI watcher...'
-$uiOut = Join-Path $out 'ui'
-dotnet publish (Join-Path $src 'src\RevitTrace.UIWatcher\RevitTrace.UIWatcher.csproj') -c Release --self-contained false --nologo -o $uiOut
-Copy-Item (Join-Path $uiOut '*') $companion -Recurse -Force
-
-# Autodesk API assemblies must never be shipped.
-$forbidden = Get-ChildItem $ready -Recurse -File | Where-Object {
-    $_.Name -in @('RevitAPI.dll','RevitAPIUI.dll','AdWindows.dll','UIFramework.dll')
-}
-if ($forbidden) {
-    $names = ($forbidden.FullName -join '; ')
-    throw "Forbidden Autodesk runtime assemblies found in package: $names"
-}
-
-@'
-param()
-$ErrorActionPreference = 'Stop'
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$payload = Join-Path $here 'Payload\ZODCHI.RevitTrace'
-$addinBase = Join-Path $env:APPDATA 'Autodesk\Revit\Addins\2025'
-$installDir = Join-Path $addinBase 'ZODCHI.RevitTrace'
-$manifestPath = Join-Path $addinBase 'ZODCHI.RevitTrace.addin'
-
-if (Get-Process Revit -ErrorAction SilentlyContinue) {
-    throw 'Close Revit before installing ZODCHI RevitTrace.'
-}
-if (-not (Test-Path (Join-Path $payload 'ZODCHI.RevitTrace.Addin.dll'))) {
-    throw 'Payload is incomplete.'
-}
-
-New-Item -ItemType Directory -Force -Path $addinBase | Out-Null
-Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item $payload $installDir -Recurse -Force
-
-$assembly = Join-Path $installDir 'ZODCHI.RevitTrace.Addin.dll'
-$xml = @"
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
-<RevitAddIns>
-  <AddIn Type="Application">
-    <Name>ZODCHI RevitTrace</Name>
-    <Assembly>$assembly</Assembly>
-    <AddInId>29F3222B-0C42-469E-9A2C-BC97D723EA7B</AddInId>
-    <FullClassName>ZODCHI.RevitTrace.Addin.RevitTraceApplication</FullClassName>
-    <VendorId>ZODCHI</VendorId>
-    <VendorDescription>ZODCHI Research — observable Revit workflow recorder</VendorDescription>
-  </AddIn>
-</RevitAddIns>
-"@
-Set-Content -LiteralPath $manifestPath -Value $xml -Encoding UTF8
-
-$settingsDir = Join-Path $env:APPDATA 'ZODCHI\RevitTrace'
-New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
-
-Write-Host ''
-Write-Host 'ZODCHI RevitTrace installed.' -ForegroundColor Green
-Write-Host "Manifest: $manifestPath"
-Write-Host "Add-in:   $installDir"
-Write-Host "Start Revit 2025 and open the ZODCHI Research ribbon tab."
-'@ | Set-Content -LiteralPath (Join-Path $ready 'install-ready.ps1') -Encoding UTF8
-
-@'
-@echo off
-setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-ready.ps1"
-if errorlevel 1 (
-  echo.
-  echo INSTALL FAILED.
-  pause
-  exit /b 1
-)
-echo.
-echo INSTALL COMPLETE.
-pause
-'@ | Set-Content -LiteralPath (Join-Path $ready 'INSTALL.cmd') -Encoding ASCII
-
-@'
-@echo off
-setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$b=Join-Path $env:APPDATA 'Autodesk\Revit\Addins\2025'; Remove-Item (Join-Path $b 'ZODCHI.RevitTrace.addin') -Force -ErrorAction SilentlyContinue; Remove-Item (Join-Path $b 'ZODCHI.RevitTrace') -Recurse -Force -ErrorAction SilentlyContinue; Write-Host 'ZODCHI RevitTrace removed.'"
-pause
-'@ | Set-Content -LiteralPath (Join-Path $ready 'UNINSTALL.cmd') -Encoding ASCII
-
-@'
-ZODCHI RevitTrace R1.4 — READY BUILD FOR REVIT 2025
-
-INSTALL:
-1. Close Revit 2025.
-2. Double-click INSTALL.cmd.
-3. Start Revit 2025.
-4. Open ribbon tab "ZODCHI Research".
-5. Press "Start Capture".
-
-No build, Revit path selection, Python, Visual Studio or Revit SDK is required.
-
-INSTALL TARGET:
-%APPDATA%\Autodesk\Revit\Addins\2025\ZODCHI.RevitTrace.addin
-%APPDATA%\Autodesk\Revit\Addins\2025\ZODCHI.RevitTrace\
-
-This package does NOT contain Autodesk RevitAPI.dll/RevitAPIUI.dll.
-The recorder only uses public Revit API assemblies already loaded by Revit.
+The recorder uses the Revit API assemblies loaded by Revit.
 '@ | Set-Content -LiteralPath (Join-Path $ready 'README_INSTALL.txt') -Encoding UTF8
 
 $releaseDir = Join-Path $repo 'release'
