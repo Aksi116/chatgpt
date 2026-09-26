@@ -168,7 +168,12 @@ Set-Content -LiteralPath $aggProgram -Value $ap -Encoding UTF8
 # UI watcher source needs System.IO for File/Path/Directory.
 $uiWatcherSource = Join-Path $src 'src\RevitTrace.UIWatcher\RevitUiWatcher.cs'
 $uw = Get-Content $uiWatcherSource -Raw
-if ($uw -notmatch '(?m)^using System\.IO;\s*
+if ($uw -notmatch '(?m)^using System\.IO;\s*$') {
+    $uw = 'using System.IO;' + [Environment]::NewLine + $uw
+    Set-Content -LiteralPath $uiWatcherSource -Value $uw -Encoding UTF8
+}
+
+Write-Host 'Building Revit add-in...'
 dotnet restore $addinProj --nologo
 dotnet build $addinProj -c Release --no-restore --nologo
 
